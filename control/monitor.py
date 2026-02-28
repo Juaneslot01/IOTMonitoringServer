@@ -1,6 +1,5 @@
 import ssl
 import time
-from argparse import ArgumentError
 from datetime import datetime, timedelta
 
 import schedule
@@ -10,24 +9,18 @@ from paho.mqtt import client as mqtt
 
 from receiver.models import Data, Measurement
 
+# Creamos el cliente global con la versión de API correcta para Paho 2.0+
 client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, settings.MQTT_USER_PUB)
 
 
 def analyze_data():
-    # Consulta todos los datos de la última hora, los agrupa por estación y variable
-    # Compara el promedio con los valores límite que están en la base de datos para esa variable.
-    # Si el promedio se excede de los límites, se envia un mensaje de alerta.
-
+    """
+    Consulta datos de la última hora y envía alertas si exceden los límites.
+    """
     data = Data.objects.filter(base_time__gte=datetime.now() - timedelta(hours=1))
     aggregation = (
         data.annotate(check_value=Avg("avg_value"))
         .select_related("station", "measurement")
-        .select_related("station__user", "station__location")
-        .select_related(
-            "station__location__city",
-            "station__location__state",
-            "station__location__country",
-        )
         .values(
             "check_value",
             "station__user__username",
@@ -39,59 +32,54 @@ def analyze_data():
             "station__location__country__name",
         )
     )
+
     alerts = 0
     for item in aggregation:
         alert = False
-
         variable = item["measurement__name"]
-        max_value = item["measurement__max_value"] or 0
-        min_value = item["measurement__min_value"] or 0
+        max_val = item["measurement__max_value"] or 0
+        min_val = item["measurement__min_value"] or 0
 
-        country = item["station__location__country__name"]
-        state = item["station__location__state__name"]
-        city = item["station__location__city__name"]
-        user = item["station__user__username"]
-
-        if item["check_value"] > max_value or item["check_value"] < min_value:
+        if item["check_value"] > max_val or item["check_value"] < min_val:
             alert = True
 
         if alert:
-            message = "ALERT {} {} {}".format(variable, min_value, max_value)
-            topic = "{}/{}/{}/{}/in".format(country, state, city, user)
-            print(datetime.now(), "Sending alert to {} {}".format(topic, variable))
+            message = "ALERT {} {} {}".format(variable, min_val, max_val)
+            topic = "{}/{}/{}/{}/in".format(
+                item["station__location__country__name"],
+                item["station__location__state__name"],
+                item["station__location__city__name"],
+                item["station__user__username"],
+            )
+            print(datetime.now(), "Enviando alerta a {} {}".format(topic, variable))
             client.publish(topic, message)
             alerts += 1
 
-    print(len(aggregation), "dispositivos revisados")
-    print(alerts, "alertas enviadas")
+    print(len(aggregation), "dispositivos revisados.", alerts, "alertas enviadas.")
 
 
 def on_connect(client, userdata, flags, rc):
-    """
-    Función que se ejecuta cuando se conecta al bróker.
-    """
-    print("Conectando al broker MQTT...", mqtt.connack_string(rc))
+    print("Conectado al broker MQTT con código:", mqtt.connack_string(rc))
 
 
-def on_disconnect(client: mqtt.Client, userdata, rc):
-    """
-    Función que se ejecuta cuando se desconecta del broker.
-    Intenta reconectar al bróker.
-    """
-    print("Desconectado con mensaje:" + str(mqtt.connack_string(rc)))
-    print("Reconectando...")
-    client.reconnect()
+def on_disconnect(client, userdata, rc):
+    print("Desconectado. Intentando reconectar...")
+    try:
+        client.reconnect()
+    except Exception as e:
+        print("Error al reconectar:", e)
 
 
 def setup_mqtt():
     """
-    Configura el cliente MQTT para conectarse al broker.
+    Configura el cliente MQTT global.
     """
-
-    print("Iniciando cliente MQTT...", settings.MQTT_HOST, settings.MQTT_PORT)
+    print(
+        "Iniciando cliente MQTT en {}:{}".format(settings.MQTT_HOST, settings.MQTT_PORT)
+    )
     global client
     try:
-        client = mqtt.Client(settings.MQTT_USER_PUB)
+        # IMPORTANTE: No volvemos a instanciar el cliente aquí para no perder la versión de la API
         client.on_connect = on_connect
         client.on_disconnect = on_disconnect
 
@@ -104,18 +92,22 @@ def setup_mqtt():
 
         client.username_pw_set(settings.MQTT_USER_PUB, settings.MQTT_PASSWORD_PUB)
         client.connect(settings.MQTT_HOST, settings.MQTT_PORT)
+        client.loop_start()  # Iniciamos el loop para que procese callbacks en segundo plano
 
     except Exception as e:
-        print("Ocurrió un error al conectar con el bróker MQTT:", e)
+        print("Error en la conexión MQTT:", e)
 
 
 def start_cron():
     """
-    Inicia el cron que se encarga de ejecutar la función analyze_data cada 5 minutos.
+    Inicia el ciclo de monitoreo.
     """
-    print("Iniciando cron...")
+    print("Iniciando cron cada 5 minutos...")
     schedule.every(5).minutes.do(analyze_data)
-    print("Servicio de control iniciado")
-    while 1:
+
+    # Ejecutamos una vez al inicio para probar
+    analyze_data()
+
+    while True:
         schedule.run_pending()
         time.sleep(1)
