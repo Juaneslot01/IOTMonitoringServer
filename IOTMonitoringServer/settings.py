@@ -98,7 +98,7 @@ DATABASES = {
         "USER": "dbadmin",  # Nombre de usuario
         "PASSWORD": "uniandesIOT1234*",  # Contraseña
         "HOST": "32.192.199.34",  # Dirección IP de la base de datos
-        "PORT": "5432",  # Puerto de la base de datos
+        "PORT": "",  # Puerto de la base de datos
     }
 }
 
