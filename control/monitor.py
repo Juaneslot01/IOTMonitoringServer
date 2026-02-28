@@ -8,7 +8,7 @@ from django.conf import settings
 from django.db.models import Avg
 from paho.mqtt import client as mqtt
 
-from receiver.models import Data, Measurementx
+from receiver.models import Data, Measurement
 
 client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, settings.MQTT_USER_PUB)
 
