@@ -53,7 +53,7 @@ def analyze_data():
             client.publish(topic, message)
             alerts += 1
 
-        # --- NUEVO EVENTO (RETO PREGUNTA 1) ---
+        # --- NUEVO EVENTO ---
         # Condición: Consulta a DB (ya hecha en aggregation) + Regla específica
         if variable.lower() == "temperatura" and avg_value > 30.0:
             # Acción: Enviar comando al actuador
