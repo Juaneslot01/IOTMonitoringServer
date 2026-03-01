@@ -15,7 +15,7 @@ client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, settings.MQTT_USER_PUB)
 
 def analyze_data():
     """
-    Consulta datos de la última hora y envía alertas si exceden los límites.
+    Consulta datos de la última hora y envía alertas/comandos.
     """
     data = Data.objects.filter(base_time__gte=datetime.now() - timedelta(hours=1))
     aggregation = (
@@ -35,27 +35,40 @@ def analyze_data():
 
     alerts = 0
     for item in aggregation:
-        alert = False
         variable = item["measurement__name"]
         max_val = item["measurement__max_value"] or 0
         min_val = item["measurement__min_value"] or 0
+        avg_value = item["check_value"]
 
-        if item["check_value"] > max_val or item["check_value"] < min_val:
-            alert = True
+        topic = "{}/{}/{}/{}/in".format(
+            item["station__location__country__name"],
+            item["station__location__state__name"],
+            item["station__location__city__name"],
+            item["station__user__username"],
+        )
 
-        if alert:
+        # --- LÓGICA EXISTENTE (Alertas de rango) ---
+        if avg_value > max_val or avg_value < min_val:
             message = "ALERT {} {} {}".format(variable, min_val, max_val)
-            topic = "{}/{}/{}/{}/in".format(
-                item["station__location__country__name"],
-                item["station__location__state__name"],
-                item["station__location__city__name"],
-                item["station__user__username"],
-            )
-            print(datetime.now(), "Enviando alerta a {} {}".format(topic, variable))
             client.publish(topic, message)
             alerts += 1
 
-    print(len(aggregation), "dispositivos revisados.", alerts, "alertas enviadas.")
+        # --- NUEVO EVENTO (RETO PREGUNTA 1) ---
+        # Condición: Consulta a DB (ya hecha en aggregation) + Regla específica
+        if variable.lower() == "temperatura" and avg_value > 30.0:
+            # Acción: Enviar comando al actuador
+            command_msg = "ACTUATOR_COMMAND SET_FAN_ON"
+            print(
+                f"!!! EVENTO CRÍTICO: Promedio {avg_value}°C. Enviando comando a actuador en {topic}"
+            )
+            client.publish(topic, command_msg)
+
+    print(
+        len(aggregation),
+        "dispositivos revisados.",
+        alerts,
+        "alertas de rango enviadas.",
+    )
 
 
 def on_connect(client, userdata, flags, rc):
